@@ -1,0 +1,40 @@
+schemaVersion: "1.0"
+project:
+  name: "staychat-file-vault"
+  repository: "Priyanshu-Solanki-Meraki/Staychat-File-vault-system-"
+  targetBranch: "main"
+  # Verified with Meraki Delivery Automation v2.2.0
+
+traceability:
+  required: false
+  pattern: "(?:#|issue/|ticket/|docs/)([A-Za-z0-9._-]+)"
+
+checks:
+  ciCheckNames:
+    - "ci"
+    - "test"
+    - "build"
+    - "check"
+  lintCheckNames:
+    - "lint"
+  testCheckNames:
+    - "test"
+  buildCheckNames:
+    - "build"
+
+pathRules:
+  UI_PRESENTATION:
+    - "**/*.{html,css,scss,jsx,tsx,vue}"
+  APPLICATION_LOGIC:
+    - "**/*.{js,ts,mjs,cjs}"
+    - "server/**"
+    - "client/**"
+  TESTS_DOCUMENTATION:
+    - "**/*.{md,txt}"
+    - "tests/**"
+    - "**/*.test.*"
+
+riskRules:
+  highAttention: []
+  additionalAttention: []
+  lowAttention: []

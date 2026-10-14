@@ -1,0 +1,102 @@
+name: PR Review Pack
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - main
+      - staging
+      - 'release/**'
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  statuses: read
+  issues: read
+
+concurrency:
+  group: review-pack-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Generate Review Pack
+    runs-on: ubuntu-latest
+    # Optionally skip draft PRs if preliminary draft review is not desired:
+    # if: github.event.pull_request.draft == false
+    steps:
+      # Step 1: Fork & Credential Safety Guard
+      # In public repos, fork pull requests do NOT have access to secrets.
+      # If secrets are missing, fail gracefully with an audit notice without crashing.
+      - name: Verify Engine Access Credentials
+        id: check-creds
+        shell: bash
+        env:
+          MERAKI_APP_ID: ${{ secrets.MERAKI_ENGINE_APP_ID }}
+          MERAKI_APP_KEY: ${{ secrets.MERAKI_ENGINE_APP_PRIVATE_KEY }}
+          MERAKI_PAT: ${{ secrets.MERAKI_ENGINE_TOKEN }}
+        run: |
+          if [ -n "$MERAKI_APP_ID" ] && [ -n "$MERAKI_APP_KEY" ]; then
+            echo "auth_mode=app" >> "$GITHUB_OUTPUT"
+            echo "has_creds=true" >> "$GITHUB_OUTPUT"
+            echo "[AUTH] Authenticating via dedicated GitHub App installation."
+          elif [ -n "$MERAKI_PAT" ]; then
+            echo "auth_mode=pat" >> "$GITHUB_OUTPUT"
+            echo "has_creds=true" >> "$GITHUB_OUTPUT"
+            echo "[AUTH] Authenticating via fine-grained Personal Access Token."
+          else
+            echo "auth_mode=none" >> "$GITHUB_OUTPUT"
+            echo "has_creds=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Meraki Security Guard::Engine access credentials are unavailable (e.g. untrusted fork PR or unconfigured secret). Review pack execution safely bypassed."
+          fi
+
+      # Step 2: Mint Short-Lived Engine Token via GitHub App (Preferred Production Model)
+      - name: Generate Engine Read Token
+        if: steps.check-creds.outputs.auth_mode == 'app'
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0 (pinned immutable SHA)
+        with:
+          app-id: ${{ secrets.MERAKI_ENGINE_APP_ID }}
+          private-key: ${{ secrets.MERAKI_ENGINE_APP_PRIVATE_KEY }}
+          owner: Priyanshu-Solanki-Meraki
+          repositories: -Meraki-Delivery-Automation
+
+      # Step 3: Checkout Caller Repository (for configuration and context)
+      - name: Checkout caller repository
+        if: steps.check-creds.outputs.has_creds == 'true'
+        uses: actions/checkout@v4
+
+      # Step 4: Checkout Private Meraki Delivery Automation Engine
+      # Scoped strictly to reading the engine repository using the short-lived App token or PAT
+      - name: Checkout Meraki Delivery Automation Engine
+        if: steps.check-creds.outputs.has_creds == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: Priyanshu-Solanki-Meraki/-Meraki-Delivery-Automation
+          ref: main # Pin to 'v2.2.0' once release tag is published
+          token: ${{ steps.app-token.outputs.token || secrets.MERAKI_ENGINE_TOKEN }}
+          path: .meraki-engine
+
+      # Step 5: Execute Meraki PR Review Pack via Local Composite Action
+      - name: Run Meraki PR Review Pack
+        if: steps.check-creds.outputs.has_creds == 'true'
+        id: run-review
+        uses: ./.meraki-engine
+        with:
+          mode: 'review'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          pr-number: ${{ github.event.pull_request.number }}
+          config-path: 'meraki.yaml'
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY || '' }}
+
+      # Step 6: Upload Review Pack Artifacts
+      - name: Upload Review Pack Artifacts
+        if: steps.check-creds.outputs.has_creds == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-pack-pr-${{ github.event.pull_request.number }}-${{ steps.run-review.outputs.head-sha || 'head' }}
+          path: |
+            review-packs/**/PR-${{ github.event.pull_request.number }}*
+          retention-days: 30

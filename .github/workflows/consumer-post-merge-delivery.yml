@@ -1,0 +1,95 @@
+name: Post-Merge Delivery Record
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+      - staging
+      - 'release/**'
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  statuses: read
+  issues: read
+
+jobs:
+  delivery:
+    name: Generate Delivery Record
+    runs-on: ubuntu-latest
+    # Strict Merge Guardrail: Closed-but-unmerged PRs are never processed for delivery
+    if: github.event.pull_request.merged == true
+    steps:
+      # Step 1: Credential Verification
+      - name: Verify Engine Access Credentials
+        id: check-creds
+        shell: bash
+        env:
+          MERAKI_APP_ID: ${{ secrets.MERAKI_ENGINE_APP_ID }}
+          MERAKI_APP_KEY: ${{ secrets.MERAKI_ENGINE_APP_PRIVATE_KEY }}
+          MERAKI_PAT: ${{ secrets.MERAKI_ENGINE_TOKEN }}
+        run: |
+          if [ -n "$MERAKI_APP_ID" ] && [ -n "$MERAKI_APP_KEY" ]; then
+            echo "auth_mode=app" >> "$GITHUB_OUTPUT"
+            echo "has_creds=true" >> "$GITHUB_OUTPUT"
+            echo "[AUTH] Authenticating via dedicated GitHub App installation."
+          elif [ -n "$MERAKI_PAT" ]; then
+            echo "auth_mode=pat" >> "$GITHUB_OUTPUT"
+            echo "has_creds=true" >> "$GITHUB_OUTPUT"
+            echo "[AUTH] Authenticating via fine-grained Personal Access Token."
+          else
+            echo "auth_mode=none" >> "$GITHUB_OUTPUT"
+            echo "has_creds=false" >> "$GITHUB_OUTPUT"
+            echo "::error title=Meraki Credentials Missing::Neither MERAKI_ENGINE_APP_PRIVATE_KEY nor MERAKI_ENGINE_TOKEN is configured in repository secrets."
+            exit 1
+          fi
+
+      # Step 2: Mint Short-Lived Engine Token via GitHub App (Preferred Production Model)
+      - name: Generate Engine Read Token
+        if: steps.check-creds.outputs.auth_mode == 'app'
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0 (pinned immutable SHA)
+        with:
+          app-id: ${{ secrets.MERAKI_ENGINE_APP_ID }}
+          private-key: ${{ secrets.MERAKI_ENGINE_APP_PRIVATE_KEY }}
+          owner: Priyanshu-Solanki-Meraki
+          repositories: -Meraki-Delivery-Automation
+
+      # Step 3: Checkout Caller Repository
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+
+      # Step 4: Checkout Private Meraki Delivery Automation Engine
+      # Scoped strictly to reading the engine repository using the short-lived App token or PAT
+      - name: Checkout Meraki Delivery Automation Engine
+        uses: actions/checkout@v4
+        with:
+          repository: Priyanshu-Solanki-Meraki/-Meraki-Delivery-Automation
+          ref: main # Pin to 'v2.2.0' once release tag is published
+          token: ${{ steps.app-token.outputs.token || secrets.MERAKI_ENGINE_TOKEN }}
+          path: .meraki-engine
+
+      # Step 5: Execute Meraki Delivery Automation via Local Composite Action
+      - name: Run Meraki Delivery Automation
+        id: run-delivery
+        uses: ./.meraki-engine
+        with:
+          mode: 'delivery'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          pr-number: ${{ github.event.pull_request.number }}
+          config-path: 'meraki.yaml'
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY || '' }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY || '' }}
+
+      # Step 6: Upload Delivery Record Artifacts
+      - name: Upload Delivery Record Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: delivery-record-pr-${{ github.event.pull_request.number }}
+          path: |
+            delivery-records/**/PR-${{ github.event.pull_request.number }}.*
+          retention-days: 90
