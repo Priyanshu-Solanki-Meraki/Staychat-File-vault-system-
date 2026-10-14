@@ -55,7 +55,7 @@ jobs:
       - name: Generate Engine Read Token
         if: steps.check-creds.outputs.auth_mode == 'app'
         id: app-token
-        uses: actions/create-github-app-token@21cf9615745b61037bcbb442833dd6f0b4171118 # v1.11.0 (pinned immutable SHA)
+        uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.MERAKI_ENGINE_APP_ID }}
           private-key: ${{ secrets.MERAKI_ENGINE_APP_PRIVATE_KEY }}
