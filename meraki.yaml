@@ -3,6 +3,7 @@ project:
   name: "staychat-file-vault"
   repository: "Priyanshu-Solanki-Meraki/Staychat-File-vault-system-"
   targetBranch: "main"
+  # Verified with Meraki Delivery Automation v2.2.0
 
 traceability:
   required: false
